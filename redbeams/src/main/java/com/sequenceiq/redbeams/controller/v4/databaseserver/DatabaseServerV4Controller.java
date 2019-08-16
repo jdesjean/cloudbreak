@@ -1,6 +1,8 @@
 package com.sequenceiq.redbeams.controller.v4.databaseserver;
 
+import java.util.Optional;
 import java.util.Set;
+import java.util.stream.Collectors;
 
 import javax.inject.Inject;
 import javax.transaction.Transactional;
@@ -21,6 +23,7 @@ import com.sequenceiq.redbeams.api.endpoint.v4.databaseserver.responses.Database
 import com.sequenceiq.redbeams.api.endpoint.v4.databaseserver.responses.DatabaseServerTestV4Response;
 import com.sequenceiq.redbeams.api.endpoint.v4.databaseserver.responses.DatabaseServerV4Response;
 import com.sequenceiq.redbeams.api.endpoint.v4.databaseserver.responses.DatabaseServerV4Responses;
+import com.sequenceiq.redbeams.api.model.common.Status;
 import com.sequenceiq.redbeams.converter.stack.AllocateDatabaseServerV4RequestToDBStackConverter;
 import com.sequenceiq.redbeams.domain.DatabaseServerConfig;
 import com.sequenceiq.redbeams.domain.stack.DBStack;
@@ -59,19 +62,27 @@ public class DatabaseServerV4Controller implements DatabaseServerV4Endpoint {
     @Override
     public DatabaseServerV4Responses list(String environmentCrn) {
         Set<DatabaseServerConfig> all = databaseServerConfigService.findAll(DEFAULT_WORKSPACE, environmentCrn);
-        return new DatabaseServerV4Responses(converterUtil.convertAllAsSet(all, DatabaseServerV4Response.class));
+        Set<DatabaseServerV4Response> responses = all.stream()
+            .map(server -> {
+                DatabaseServerV4Response response = converterUtil.convert(server, DatabaseServerV4Response.class);
+                return addStatus(response, server);
+            })
+            .collect(Collectors.toSet());
+        return new DatabaseServerV4Responses(responses);
     }
 
     @Override
     public DatabaseServerV4Response getByName(String environmentCrn, String name) {
         DatabaseServerConfig server = databaseServerConfigService.getByName(DEFAULT_WORKSPACE, environmentCrn, name);
-        return converterUtil.convert(server, DatabaseServerV4Response.class);
+        DatabaseServerV4Response response = converterUtil.convert(server, DatabaseServerV4Response.class);
+        return addStatus(response, server);
     }
 
     @Override
     public DatabaseServerV4Response getByCrn(String crn) {
         DatabaseServerConfig server = databaseServerConfigService.getByCrn(crn);
-        return converterUtil.convert(server, DatabaseServerV4Response.class);
+        DatabaseServerV4Response response = converterUtil.convert(server, DatabaseServerV4Response.class);
+        return addStatus(response, server);
     }
 
     @Override
@@ -146,5 +157,19 @@ public class DatabaseServerV4Controller implements DatabaseServerV4Endpoint {
                 request.getDatabaseName(),
                 request.getType());
         return new CreateDatabaseV4Response(result);
+    }
+
+    private DatabaseServerV4Response addStatus(DatabaseServerV4Response response, DatabaseServerConfig server) {
+        Optional<DBStack> dbStackOpt = server.getDbStack();
+        if (dbStackOpt.isPresent()) {
+            DBStack dbStack = dbStackOpt.get();
+            response.setStatus(dbStack.getStatus());
+            response.setStatusReason(dbStack.getStatusReason());
+        } else if (server.getHost() != null && server.getPort() != null) {
+            response.setStatus(Status.AVAILABLE);
+        } else {
+            response.setStatus(Status.UNKNOWN);
+        }
+        return response;
     }
 }
