@@ -1,5 +1,6 @@
 package com.sequenceiq.datalake.service.sdx;
 
+import java.util.Map;
 import java.util.concurrent.TimeUnit;
 import java.util.function.Function;
 
@@ -10,7 +11,6 @@ import javax.ws.rs.NotFoundException;
 import org.apache.logging.log4j.util.Strings;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
-import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 
 import com.dyngr.Polling;
@@ -29,6 +29,7 @@ import com.sequenceiq.redbeams.api.endpoint.v4.stacks.DatabaseServerV4StackReque
 import com.sequenceiq.redbeams.api.endpoint.v4.stacks.aws.AwsDatabaseServerV4Parameters;
 import com.sequenceiq.redbeams.api.model.common.Status;
 import com.sequenceiq.redbeams.client.RedbeamsServiceCrnClient;
+import com.sequenceiq.sdx.api.model.SdxClusterShape;
 
 @Service
 public class DatabaseService {
@@ -47,14 +48,8 @@ public class DatabaseService {
     @Inject
     private ThreadBasedUserCrnProvider threadBasedUserCrnProvider;
 
-    @Value("${datalake.db.instancetype:db.m5.large}")
-    private String dbInstanceType;
-
-    @Value("${datalake.db.volumesize:100}")
-    private long dbVolumeSize;
-
-    @Value("${datalake.db.vendor:postgres}")
-    private String dbVendor;
+    @Inject
+    private Map<SdxClusterShape, DatabaseConfig> dbConfigs;
 
     public DatabaseServerStatusV4Response create(SdxCluster sdxCluster, DetailedEnvironmentResponse env, String requestId) {
         LOGGER.info("Create databaseServer in environment {} for SDX {}", env.getName(), sdxCluster.getClusterName());
@@ -65,7 +60,7 @@ public class DatabaseService {
             try {
                 dbResourceCrn = redbeamsClient
                         .withCrn(threadBasedUserCrnProvider.getUserCrn())
-                        .databaseServerV4Endpoint().create(getDatabaseRequest(env))
+                        .databaseServerV4Endpoint().create(getDatabaseRequest(sdxCluster.getClusterShape(), env))
                         .getResourceCrn();
                 sdxCluster.setDatabaseCrn(dbResourceCrn);
             } catch (BadRequestException badRequestException) {
@@ -102,18 +97,22 @@ public class DatabaseService {
         }
     }
 
-    private AllocateDatabaseServerV4Request getDatabaseRequest(DetailedEnvironmentResponse env) {
+    private AllocateDatabaseServerV4Request getDatabaseRequest(SdxClusterShape clusterShape, DetailedEnvironmentResponse env) {
         AllocateDatabaseServerV4Request req = new AllocateDatabaseServerV4Request();
         req.setEnvironmentCrn(env.getCrn());
-        req.setDatabaseServer(getDatabaseServerRequest());
+        req.setDatabaseServer(getDatabaseServerRequest(clusterShape));
         return req;
     }
 
-    private DatabaseServerV4StackRequest getDatabaseServerRequest() {
+    private DatabaseServerV4StackRequest getDatabaseServerRequest(SdxClusterShape clusterShape) {
+        DatabaseConfig databaseConfig = dbConfigs.get(clusterShape);
+        if (databaseConfig == null) {
+            throw new BadRequestException("Not found database config for " + clusterShape);
+        }
         DatabaseServerV4StackRequest req = new DatabaseServerV4StackRequest();
-        req.setInstanceType(dbInstanceType);
-        req.setDatabaseVendor(dbVendor);
-        req.setStorageSize(dbVolumeSize);
+        req.setInstanceType(databaseConfig.getInstanceType());
+        req.setDatabaseVendor(databaseConfig.getVendor());
+        req.setStorageSize(databaseConfig.getVolumeSize());
         req.setAws(getAwsDatabaseServerParameters());
         return req;
     }
